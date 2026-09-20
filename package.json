@@ -1,0 +1,52 @@
+{
+  "name": "@wyre-ai/dicker-data-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Dicker Data's B2B partner/reseller REST API - pricing, orders, and invoices",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "dicker-data-mcp": "./dist/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WYRE-AI/dicker-data-mcp"
+  },
+  "homepage": "https://github.com/WYRE-AI/dicker-data-mcp",
+  "scripts": {
+    "build": "tsup",
+    "prebuild": "npm run clean",
+    "dev": "tsup --watch",
+    "start": "node dist/index.js",
+    "start:http": "MCP_TRANSPORT=http node dist/http.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "dicker-data",
+    "mcp",
+    "msp",
+    "distribution",
+    "model-context-protocol"
+  ],
+  "author": "WYRE Technology",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "^2.1.8",
+    "tsup": "^8.0.0",
+    "typescript": "^6.0.3",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "overrides": {
+    "zod": "4.3.6"
+  }
+}
