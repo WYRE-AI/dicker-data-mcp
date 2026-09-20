@@ -60,7 +60,12 @@ interface AccessKeyState {
 const accessKeyCache = new Map<string, AccessKeyState>();
 
 function cacheKeyFor(creds: DickerDataCredentials): string {
-  return `${creds.accountCode}:${creds.accessToken}`;
+  // JSON.stringify (not a colon-join) so a colon inside either credential
+  // value can never collapse two distinct tenants onto the same cache key —
+  // Dicker Data's API docs don't constrain the charset of AccountCode or
+  // AccessToken, so that's a live possibility, not a hypothetical, on a
+  // secret cache shared across tenants.
+  return JSON.stringify([creds.accountCode, creds.accessToken]);
 }
 
 /**

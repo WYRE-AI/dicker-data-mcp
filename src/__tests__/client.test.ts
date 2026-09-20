@@ -97,6 +97,35 @@ describe('getPricing - accessKey caching and refresh', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it('never shares a cached AccessKey between two tenants whose credentials would collide under a naive colon-join', async () => {
+    // accountCode="A:B"/accessToken="C" and accountCode="A"/accessToken="B:C"
+    // both concatenate to "A:B:C" under a plain `${a}:${b}` join — this
+    // guards the actual cache-key encoding against that collision.
+    const tenantOne = { accountCode: 'A:B', accessToken: 'C' };
+    const tenantTwo = { accountCode: 'A', accessToken: 'B:C' };
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ AccessKey: 'ak-tenant-one', ExpireDateTime: new Date(Date.now() + 600_000).toISOString() })
+      )
+      .mockResolvedValueOnce(jsonResponse({ SearchResult: [] }));
+    await getPricing(tenantOne, ['ABC123']);
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ AccessKey: 'ak-tenant-two', ExpireDateTime: new Date(Date.now() + 600_000).toISOString() })
+      )
+      .mockResolvedValueOnce(jsonResponse({ SearchResult: [] }));
+    await getPricing(tenantTwo, ['ABC123']);
+
+    // 4 total fetches (exchange+request per tenant) means tenant two did its
+    // own AccessKeyRequest exchange rather than reusing tenant one's cached
+    // key — a colon-join collision would collapse this to 3.
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    const tenantTwoPricingUrl = new URL(fetchMock.mock.calls[3][0] as string);
+    expect(tenantTwoPricingUrl.searchParams.get('pricingRequest.accessKey')).toBe('ak-tenant-two');
+  });
+
   it('refreshes the AccessKey exactly once when the vendor rejects it mid-call, then retries', async () => {
     const creds = { accountCode: 'ACC-REFRESH', accessToken: 'tok-refresh' };
     fetchMock
