@@ -14,7 +14,7 @@ export function createServer(): Server {
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    if (toolInputTooLarge(args)) return toolInputTooLargeResult(name);
+    if (toolInputTooLarge(args)) return toolInputTooLargeResult();
     try {
       return await dispatchToolCall(name, (args || {}) as Record<string, unknown>);
     } catch (error) {

@@ -151,7 +151,22 @@ export async function startHttpServer(): Promise<HttpServer> {
       return;
     }
 
-    // Body cap runs only after S2S passes so unauthenticated callers still get 401.
+    const accountCode = headerValue(req.headers['x-dickerdata-account-code']);
+    const accessToken = headerValue(req.headers['x-dickerdata-access-token']);
+
+    // Gateway mode: credentials must arrive on every request via the
+    // x-dickerdata-account-code and x-dickerdata-access-token headers.
+    // Reject explicitly if either is missing rather than falling through —
+    // falling through would resolve DICKERDATA_* from the process
+    // environment, which is not request-scoped (CWE-306).
+    if (isGatewayMode && (!accountCode || !accessToken)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(GATEWAY_CREDENTIALS_UNAUTHORIZED));
+      return;
+    }
+
+    // Body cap runs only after the S2S and gateway credential checks pass so
+    // unauthenticated callers still get 401.
     const contentLength = Number(headerValue(req.headers['content-length']));
     if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BODY_BYTES) {
       res.writeHead(413, { 'Content-Type': 'application/json' });
@@ -164,9 +179,6 @@ export async function startHttpServer(): Promise<HttpServer> {
       );
       return;
     }
-
-    const accountCode = headerValue(req.headers['x-dickerdata-account-code']);
-    const accessToken = headerValue(req.headers['x-dickerdata-access-token']);
 
     const handle = async () => {
       // SECURITY-CRITICAL invariant: this transport MUST stay stateless
@@ -191,24 +203,9 @@ export async function startHttpServer(): Promise<HttpServer> {
       await transport.handleRequest(req, res);
     };
 
-    // Gateway mode: credentials must arrive on every request via the
-    // x-dickerdata-account-code and x-dickerdata-access-token headers.
-    // Reject explicitly if either is missing rather than falling through —
-    // falling through would resolve DICKERDATA_* from the process
-    // environment, which is not request-scoped (CWE-306).
-    if (isGatewayMode) {
-      if (!accountCode || !accessToken) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(GATEWAY_CREDENTIALS_UNAUTHORIZED));
-        return;
-      }
-      const credentials: DickerDataCredentials = { accountCode, accessToken };
-      await runWithCredentials(credentials, handle);
-      return;
-    }
-
-    // Env / single-tenant mode: per-request headers when both are present,
-    // otherwise tools resolve DICKERDATA_* from the process environment.
+    // Per-request headers when both are present (always the case in gateway
+    // mode, which rejected missing credentials above); otherwise env /
+    // single-tenant mode resolves DICKERDATA_* from the process environment.
     if (accountCode && accessToken) {
       await runWithCredentials({ accountCode, accessToken }, handle);
       return;
