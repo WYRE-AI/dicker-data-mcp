@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { handlePricingTool } from '../tools/pricing.js';
+import { handlePricingTool, PRICING_TOOLS } from '../tools/pricing.js';
 import { runWithCredentials } from '../client.js';
 import { textOf } from './test-helpers.js';
 
@@ -65,13 +65,13 @@ describe('handlePricingTool', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('dickerdata_get_price posts a request body containing the exchanged AccessKey', async () => {
+  it('dickerdata_get_price queries PricingRequest for exactly one product and ignores quantity', async () => {
     const creds = { accountCode: 'ACC-TOOL-3', accessToken: 'tok-tool-3' };
     fetchMock
       .mockResolvedValueOnce(
         jsonResponse({ AccessKey: 'ak-tool-3', ExpireDateTime: new Date(Date.now() + 600_000).toISOString() })
       )
-      .mockResolvedValueOnce(jsonResponse({ UnitPrice: '99.00' }));
+      .mockResolvedValueOnce(jsonResponse({ Status: 'SUCCESS', SearchResult: [{ PartNumber: 'XYZ999', UnitPrice: '99.00' }] }));
 
     const result = await runWithCredentials(creds, () =>
       handlePricingTool('dickerdata_get_price', { productCode: 'XYZ999', quantity: 3 })
@@ -79,11 +79,25 @@ describe('handlePricingTool', () => {
 
     expect(result.isError).toBeUndefined();
     const [url, init] = fetchMock.mock.calls[1];
-    expect(url).toBe('https://b2b-api.dickerdata.com.au/api/DickerData/GetPrice');
-    const body = JSON.parse(init.body as string);
-    expect(body.RequestHeader.AccessKey).toBe('ak-tool-3');
-    expect(body.RequestHeader.Token).toBe('tok-tool-3');
-    expect(body.Products[0].PartNumber).toBe('XYZ999');
-    expect(body.Products[0].Quantity).toBe('3');
+    const pricingUrl = new URL(url as string);
+    expect(pricingUrl.pathname).toBe('/api/PricingRequest');
+    expect(pricingUrl.searchParams.getAll('pricingRequest.products')).toEqual(['XYZ999']);
+    expect(pricingUrl.searchParams.get('pricingRequest.accessKey')).toBe('ak-tool-3');
+    expect(pricingUrl.searchParams.get('pricingRequest.token')).toBe('tok-tool-3');
+    expect([...pricingUrl.searchParams.keys()].some((key) => /quantity/i.test(key))).toBe(false);
+    expect(init.method).toBe('GET');
+    expect(init.body).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(PRICING_TOOLS.find((tool) => tool.name === 'dickerdata_get_price')?.inputSchema.properties)
+      .not.toHaveProperty('quantity');
+  });
+
+  it('dickerdata_get_price requires productCode without calling fetch', async () => {
+    const result = await runWithCredentials({ accountCode: 'ACC-MISSING', accessToken: 'tok-missing' }, () =>
+      handlePricingTool('dickerdata_get_price', {})
+    );
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('productCode is required');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

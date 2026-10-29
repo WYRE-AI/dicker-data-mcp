@@ -212,15 +212,59 @@ function buildQuery(params: Record<string, unknown>): URLSearchParams {
  */
 function looksLikeAuthRejection(body: unknown): boolean {
   if (!body || typeof body !== 'object') return false;
-  const rec = body as Record<string, unknown>;
-  const status = typeof rec.Status === 'string' ? rec.Status.toLowerCase() : '';
-  const message = typeof rec.Message === 'string' ? rec.Message.toLowerCase() : '';
-  const err = typeof rec.ErrorDescription === 'string' ? rec.ErrorDescription.toLowerCase() : '';
-  const haystack = `${status} ${message} ${err}`;
+  const haystack = responseFields(body).join(' ').toLowerCase();
   return (
     (haystack.includes('accesskey') || haystack.includes('access key')) &&
-    (haystack.includes('expired') || haystack.includes('invalid') || haystack.includes('fail'))
+    (haystack.includes('expired') || haystack.includes('invalid') ||
+      haystack.includes('fail') || haystack.includes('unable to validate'))
   );
+}
+
+/**
+ * Collects Dicker's diagnostic strings from a response body. POST endpoints
+ * nest them under ResponseHeader (e.g. ResponseHeader.ErrorDescription);
+ * GET endpoints put ErrorDescription at the top level.
+ */
+function responseFields(body: unknown, includeStatus = true): string[] {
+  if (!body || typeof body !== 'object') return [];
+  const rec = body as Record<string, unknown>;
+  return [
+    rec.ErrorDescription,
+    rec.errorDescription,
+    rec.Message,
+    rec.message,
+    ...(includeStatus ? [rec.Status, rec.status] : []),
+    ...responseFields(rec.ResponseHeader, includeStatus),
+    ...responseFields(rec.responseHeader, includeStatus),
+  ]
+    .filter((value): value is string => typeof value === 'string' && !!value.trim())
+    .map((value) => value.trim());
+}
+
+/** Preserve vendor diagnostics without exposing request credentials or query URLs. */
+async function throwHttpAuthError(res: Response, path: string, secrets: string[]): Promise<never> {
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    // A non-JSON auth response still follows the normal refresh-and-retry path.
+    logger.warn('Dicker Data auth response was not JSON', { path, status: res.status });
+  }
+  const description = responseFields(body, false)[0];
+  let detail = description;
+  if (detail) {
+    detail = detail.replace(/https?:\/\/[^\s]+\?[^\s]*/gi, '[redacted URL]');
+    for (const secret of secrets.filter(Boolean).sort((a, b) => b.length - a.length)) {
+      detail = detail.split(secret).join('[redacted]');
+    }
+  }
+  const message = detail
+    ? `Dicker Data ${path} returned HTTP ${res.status}: ${detail}`
+    : `Dicker Data rejected the AccessKey (HTTP ${res.status})`;
+  if (description && /missing request header\/authorization/i.test(description)) {
+    throw new DickerDataApiError(message, res.status);
+  }
+  throw new DickerDataAuthError(message);
 }
 
 async function doGet<T>(path: string, query: URLSearchParams): Promise<T> {
@@ -230,7 +274,8 @@ async function doGet<T>(path: string, query: URLSearchParams): Promise<T> {
     signal: AbortSignal.timeout(15_000),
   });
   if (res.status === 401 || res.status === 403) {
-    throw new DickerDataAuthError(`Dicker Data rejected the AccessKey (HTTP ${res.status})`);
+    await throwHttpAuthError(res, path, [...query.entries()]
+      .filter(([key]) => /token|accesskey/i.test(key)).map(([, value]) => value));
   }
   if (!res.ok) {
     throw new DickerDataApiError(`Dicker Data ${path} failed: HTTP ${res.status}`, res.status);
@@ -250,7 +295,8 @@ async function doPost<T>(path: string, body: unknown): Promise<T> {
     signal: AbortSignal.timeout(15_000),
   });
   if (res.status === 401 || res.status === 403) {
-    throw new DickerDataAuthError(`Dicker Data rejected the AccessKey (HTTP ${res.status})`);
+    const header = (body as { RequestHeader?: RequestHeaderFields })?.RequestHeader;
+    await throwHttpAuthError(res, path, [header?.Token ?? '', header?.AccessKey ?? '']);
   }
   if (!res.ok) {
     throw new DickerDataApiError(`Dicker Data ${path} failed: HTTP ${res.status}`, res.status);
@@ -283,18 +329,15 @@ export async function getPricing(creds: DickerDataCredentials, products: string[
   );
 }
 
-/** POST /api/DickerData/GetPrice - detailed pricing for a single product/quantity. */
+/**
+ * Single-product pricing/stock via PricingRequest. GetPrice POST requires an
+ * undocumented HTTP Authorization header (WYREAI-592); quantity is unsupported.
+ */
 export async function getPrice(
   creds: DickerDataCredentials,
-  productCode: string,
-  quantity?: number
-): Promise<UntypedVendorResponse> {
-  return withAccessKey(creds, (header) =>
-    doPost<UntypedVendorResponse>('/api/DickerData/GetPrice', {
-      RequestHeader: { TransactionID: header.TransactionID, Token: header.Token, AccessKey: header.AccessKey },
-      Products: [{ PartNumber: productCode, Quantity: quantity !== undefined ? String(quantity) : undefined }],
-    })
-  );
+  productCode: string
+): Promise<PricingResponse> {
+  return getPricing(creds, [productCode]);
 }
 
 // ---------------------------------------------------------------------
@@ -307,7 +350,7 @@ export interface CreateOrderInput {
   items: OrderItem[];
 }
 
-/** POST /api/Order/CreateOrder. */
+/** POST /api/Order/CreateOrder. May return 401 "Missing Request Header/Authorization." until Dicker confirms the auth scheme (WYREAI-592). */
 export async function createOrder(
   creds: DickerDataCredentials,
   order: CreateOrderInput

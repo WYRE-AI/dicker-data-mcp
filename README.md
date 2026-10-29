@@ -42,7 +42,7 @@ In `AUTH_MODE=gateway`, `/mcp` also requires `X-DickerData-Account-Code` and `X-
 
 ### Pricing
 - `dickerdata_get_pricing` - live pricing + stock-on-hand for one or more product codes.
-- `dickerdata_get_price` - detailed pricing for a single product code at a given quantity.
+- `dickerdata_get_price` - pricing + stock for a single product code (via PricingRequest; no quantity parameter).
 
 ### Orders
 - `dickerdata_create_order` - place a purchase order.
@@ -54,6 +54,10 @@ In `AUTH_MODE=gateway`, `/mcp` also requires `X-DickerData-Account-Code` and `X-
 ### Account
 - `dickerdata_list_invoices` - invoices within a date range.
 - `dickerdata_get_invoice_details` - line-item detail for a sales order/invoice.
+
+## Known issues
+
+WYREAI-592: Dicker Data's POST `/api/DickerData/GetPrice` requires an undocumented HTTP Authorization header, so `dickerdata_get_price` now uses GET `/api/PricingRequest` (pricing and stock, no quantity-based pricing). `dickerdata_create_order` may hit the same "Missing Request Header/Authorization" 401 until Dicker confirms the auth scheme.
 
 ## Scope
 
