@@ -248,6 +248,7 @@ async function throwHttpAuthError(res: Response, path: string, secrets: string[]
     body = await res.json();
   } catch {
     // A non-JSON auth response still follows the normal refresh-and-retry path.
+    logger.warn('Dicker Data auth response was not JSON', { path, status: res.status });
   }
   const description = responseFields(body, false)[0];
   let detail = description;

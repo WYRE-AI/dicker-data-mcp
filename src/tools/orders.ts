@@ -21,7 +21,7 @@ export const CREATE_ORDER_UNAVAILABLE_MESSAGE =
 export const ORDER_TOOLS: Tool[] = [
   {
     name: 'dickerdata_create_order',
-    description: 'TEMPORARILY UNAVAILABLE (known issue): Always returns an error and places no order because Dicker Data requires an undocumented HTTP Authorization header (WYREAI-592).',
+    description: 'TEMPORARILY UNAVAILABLE (known issue): Creates a Dicker Data purchase order when enabled. Currently always returns an error and places no order because Dicker Data requires an undocumented HTTP Authorization header (WYREAI-592).',
     inputSchema: {
       type: 'object',
       properties: {
