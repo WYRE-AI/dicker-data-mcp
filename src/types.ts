@@ -45,6 +45,36 @@ export interface PricingResponse {
   SearchResult?: PriceSearchProduct[];
 }
 
+/** ResponseHeader of POST /api/DickerData/GetPrice (undocumented in swagger; observed shape). */
+export interface GetPriceResponseHeader {
+  Status?: string;
+  ErrorDescription?: string;
+  [key: string]: unknown;
+}
+
+/** Response of POST /api/DickerData/GetPrice. Out items are loosely typed (PartNumber, UnitPrice, SOH, dimensions expected). */
+export interface GetPriceResponse {
+  ResponseHeader?: GetPriceResponseHeader;
+  Out?: Record<string, unknown>[];
+}
+
+/** Result of getPrice(): live GetPrice data, or a PricingRequest fallback flagged live:false with a warning. */
+export type GetPriceResult =
+  | {
+      source: 'GetPrice';
+      live: true;
+      productCode: string;
+      ResponseHeader?: GetPriceResponseHeader;
+      Out: Record<string, unknown>[];
+    }
+  | ({
+      source: 'PricingRequest';
+      live: false;
+      productCode: string;
+      warning: string;
+      fallbackReason: string;
+    } & PricingResponse);
+
 export interface Contact {
   FirstName?: string;
   LastName?: string;
