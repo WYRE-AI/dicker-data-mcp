@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { handleOrderTool } from '../tools/orders.js';
+import { handleOrderTool, ORDER_TOOLS, CREATE_ORDER_UNAVAILABLE_MESSAGE } from '../tools/orders.js';
 import { runWithCredentials } from '../client.js';
 import { textOf } from './test-helpers.js';
 
@@ -19,33 +19,21 @@ describe('handleOrderTool', () => {
     vi.unstubAllGlobals();
   });
 
-  it('dickerdata_create_order sends OrderIn.Items built from the tool args, with the exchanged AccessKey', async () => {
-    const creds = { accountCode: 'ACC-ORD-1', accessToken: 'tok-ord-1' };
-    fetchMock
-      .mockResolvedValueOnce(
-        jsonResponse({ AccessKey: 'ak-ord-1', ExpireDateTime: new Date(Date.now() + 600_000).toISOString() })
-      )
-      .mockResolvedValueOnce(jsonResponse({ OrderNumber: 'SO12345' }));
-
-    const result = await runWithCredentials(creds, () =>
-      handleOrderTool('dickerdata_create_order', {
-        customerPORef: 'PO-1',
-        notes: 'urgent',
-        items: [{ partNumber: 'ABC123', quantity: 2 }],
-      })
+  it('dickerdata_create_order is unavailable without any vendor calls', async () => {
+    const result = await runWithCredentials({ accountCode: 'ACC-ORD-1', accessToken: 'tok-ord-1' }, () =>
+      handleOrderTool('dickerdata_create_order', { items: [{ partNumber: 'ABC123', quantity: 2 }] })
     );
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain(CREATE_ORDER_UNAVAILABLE_MESSAGE);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(ORDER_TOOLS[0].description).toMatch(/^TEMPORARILY UNAVAILABLE/);
+  });
 
-    expect(result.isError).toBeUndefined();
-    expect(textOf(result)).toContain('SO12345');
-
-    const [url, init] = fetchMock.mock.calls[1];
-    expect(url).toBe('https://b2b-api.dickerdata.com.au/api/Order/CreateOrder');
-    const body = JSON.parse(init.body as string);
-    expect(body.RequestHeader.AccessKey).toBe('ak-ord-1');
-    expect(body.OrderIn.Items).toHaveLength(1);
-    expect(body.OrderIn.Items[0].Product.PartNumber).toBe('ABC123');
-    expect(body.OrderIn.Items[0].Product.Quantity).toBe('2');
-    expect(body.OrderIn.Items[0].Product.UseSystemPrice).toBe('true');
+  it('returns the unavailable message even without credentials', async () => {
+    const result = await handleOrderTool('dickerdata_create_order', {});
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain(CREATE_ORDER_UNAVAILABLE_MESSAGE);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('dickerdata_create_order rejects an empty items array without calling the vendor', async () => {

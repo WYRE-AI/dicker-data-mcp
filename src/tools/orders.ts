@@ -1,6 +1,5 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import {
-  createOrder,
   getConsignmentStatus,
   getCredentials,
   getOrderDetails,
@@ -9,12 +8,20 @@ import {
 } from '../client.js';
 import type { CallToolResult } from './types.js';
 import { errorResult, requireCredentials, textResult } from './shared.js';
-import type { CreateOrderInput } from '../client.js';
+
+/**
+ * dickerdata_create_order is gated (WYREAI-592): /api/Order/CreateOrder now
+ * returns 401 "Missing Request Header/Authorization." and Dicker has not
+ * documented which Authorization scheme it expects. Fail loudly instead of
+ * attempting the call.
+ */
+export const CREATE_ORDER_UNAVAILABLE_MESSAGE =
+  "dickerdata_create_order is temporarily unavailable: Dicker Data's /api/Order/CreateOrder endpoint now requires an HTTP Authorization header whose scheme Dicker has not documented. No order was placed. Place the order in the Dicker Data portal until this is resolved (WYREAI-592).";
 
 export const ORDER_TOOLS: Tool[] = [
   {
     name: 'dickerdata_create_order',
-    description: 'Place a new purchase order with Dicker Data for one or more products.',
+    description: 'TEMPORARILY UNAVAILABLE (known issue): Always returns an error and places no order because Dicker Data requires an undocumented HTTP Authorization header (WYREAI-592).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -103,48 +110,13 @@ export const ORDER_TOOLS: Tool[] = [
 ];
 
 export async function handleOrderTool(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
+  if (name === 'dickerdata_create_order') return errorResult(CREATE_ORDER_UNAVAILABLE_MESSAGE);
+
   const creds = getCredentials();
   const missing = requireCredentials(creds);
   if (missing) return missing;
 
   try {
-    if (name === 'dickerdata_create_order') {
-      const items = args.items as { partNumber: string; quantity: number; unitPrice?: string }[];
-      if (!Array.isArray(items) || items.length === 0) {
-        return errorResult('items must be a non-empty array of { partNumber, quantity }.');
-      }
-      const deliveryAddress = args.deliveryAddress as Record<string, string> | undefined;
-      const order: CreateOrderInput = {
-        header: {
-          Notes: typeof args.notes === 'string' ? args.notes : undefined,
-        },
-        delivery: deliveryAddress
-          ? {
-              Attention: typeof args.deliveryAttention === 'string' ? args.deliveryAttention : undefined,
-              DeliveryAddress: {
-                CompanyName: deliveryAddress.companyName,
-                Address01: deliveryAddress.address01,
-                Address02: deliveryAddress.address02,
-                Suburb: deliveryAddress.suburb,
-                State: deliveryAddress.state,
-                Postcode: deliveryAddress.postcode,
-                Country: deliveryAddress.country,
-              },
-            }
-          : undefined,
-        items: items.map((item) => ({
-          Product: {
-            PartNumber: item.partNumber,
-            Quantity: String(item.quantity),
-            UnitPrice: item.unitPrice,
-            UseSystemPrice: item.unitPrice ? 'false' : 'true',
-          },
-        })),
-      };
-      const result = await createOrder(creds!, order);
-      return textResult(result);
-    }
-
     if (name === 'dickerdata_get_order_details') {
       const result = await getOrderDetails(creds!, {
         orderNumber: args.orderNumber as string | undefined,

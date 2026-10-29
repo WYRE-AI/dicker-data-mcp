@@ -22,12 +22,11 @@ export const PRICING_TOOLS: Tool[] = [
   },
   {
     name: 'dickerdata_get_price',
-    description: 'Get detailed pricing for a single Dicker Data product code at a given quantity.',
+    description: 'Get pricing and stock-on-hand for a single product code (no quantity-based pricing; Dicker\'s PricingRequest has no quantity field).',
     inputSchema: {
       type: 'object',
       properties: {
         productCode: { type: 'string', description: 'The Dicker Data product/part number to price.' },
-        quantity: { type: 'number', description: 'Quantity to price at. Defaults to 1 if omitted.' },
       },
       required: ['productCode'],
     },
@@ -51,9 +50,8 @@ export async function handlePricingTool(name: string, args: Record<string, unkno
 
     if (name === 'dickerdata_get_price') {
       const productCode = args.productCode as string;
-      const quantity = typeof args.quantity === 'number' ? args.quantity : undefined;
       if (!productCode) return errorResult('productCode is required.');
-      const result = await getPrice(creds!, productCode, quantity);
+      const result = await getPrice(creds!, productCode);
       return textResult(result);
     }
 
