@@ -350,7 +350,7 @@ export interface CreateOrderInput {
   items: OrderItem[];
 }
 
-/** POST /api/Order/CreateOrder. Known-broken: requires an undocumented HTTP Authorization header (WYREAI-592). */
+/** POST /api/Order/CreateOrder. May return 401 "Missing Request Header/Authorization." until Dicker confirms the auth scheme (WYREAI-592). */
 export async function createOrder(
   creds: DickerDataCredentials,
   order: CreateOrderInput
