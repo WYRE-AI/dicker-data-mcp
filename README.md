@@ -41,8 +41,8 @@ In `AUTH_MODE=gateway`, `/mcp` also requires `X-DickerData-Account-Code` and `X-
 ## Tools
 
 ### Pricing
-- `dickerdata_get_pricing` - live pricing + stock-on-hand for one or more product codes.
-- `dickerdata_get_price` - pricing + stock for a single product code (via PricingRequest; no quantity parameter).
+- `dickerdata_get_pricing` - PricingRequest price-list (datafeed) pricing + stock-on-hand for one or more product codes. May lag your live account price and stock; dimensions may be null.
+- `dickerdata_get_price` - single product code. Tries Dicker's live POST `/api/DickerData/GetPrice` first; if that is unavailable it falls back to the PricingRequest price-list feed, and the result then has `live: false`, `fallbackReason` and a `warning` saying the price and stock-on-hand may lag your live account price and stock. Live results have `live: true`. No quantity-based pricing. Today it always falls back (see Known issues).
 
 ### Orders
 - `dickerdata_create_order` - place a purchase order.
@@ -57,7 +57,7 @@ In `AUTH_MODE=gateway`, `/mcp` also requires `X-DickerData-Account-Code` and `X-
 
 ## Known issues
 
-WYREAI-592: Dicker Data's POST `/api/DickerData/GetPrice` requires an undocumented HTTP Authorization header, so `dickerdata_get_price` now uses GET `/api/PricingRequest` (pricing and stock, no quantity-based pricing). `dickerdata_create_order` may hit the same "Missing Request Header/Authorization" 401 until Dicker confirms the auth scheme.
+WYREAI-592: Dicker Data's POST `/api/DickerData/GetPrice` requires an HTTP Authorization header whose scheme is undocumented (Dicker's swagger also lists `POST /Token`, a possible Bearer-token source, but it is unconfirmed whether its client_id/secret are the AccountCode/AccessToken). The live path is implemented behind a TODO-blocked seam in `src/client.ts` (`setGetPriceAuthorizationProvider`); the default provider returns nothing, so no GetPrice call is made and `dickerdata_get_price` always falls back to GET `/api/PricingRequest` with `live: false` and a warning that the price-list data may lag live price and stock. It will not be wired to customer credentials until Dicker (integration.support@dickerdata.com.au) confirms the scheme. `dickerdata_get_pricing` always uses PricingRequest. `dickerdata_create_order` may hit the same "Missing Request Header/Authorization" 401 until Dicker confirms the auth scheme.
 
 ## Scope
 

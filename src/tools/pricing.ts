@@ -7,14 +7,14 @@ export const PRICING_TOOLS: Tool[] = [
   {
     name: 'dickerdata_get_pricing',
     description:
-      'Look up live pricing and stock-on-hand for one or more Dicker Data product codes (part numbers).',
+      'Look up Dicker Data PricingRequest price-list (datafeed) pricing and stock-on-hand for one or more product codes. UnitPrice and SOH come from Dicker\'s PricingRequest feed and may lag your live account price and stock; dimensions may be null.',
     inputSchema: {
       type: 'object',
       properties: {
         productCodes: {
           type: 'array',
           items: { type: 'string' },
-          description: 'One or more Dicker Data product/part numbers to price and check stock for.',
+          description: 'One or more Dicker Data product/part numbers to look up price-list pricing and stock for.',
         },
       },
       required: ['productCodes'],
@@ -22,7 +22,8 @@ export const PRICING_TOOLS: Tool[] = [
   },
   {
     name: 'dickerdata_get_price',
-    description: 'Get pricing and stock-on-hand for a single product code (no quantity-based pricing; Dicker\'s PricingRequest has no quantity field).',
+    description:
+      'Look up pricing and stock-on-hand for a single Dicker Data product code. Tries Dicker\'s live GetPrice endpoint first; if that is unavailable it falls back to the PricingRequest price-list feed, and the result then has live:false and a warning field saying the price and stock may lag your live account price and stock. No quantity-based pricing. Until Dicker confirms the GetPrice Authorization scheme this will always fall back.',
     inputSchema: {
       type: 'object',
       properties: {

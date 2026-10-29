@@ -4,6 +4,8 @@ import { logger } from './utils/logger.js';
 import type {
   AccessKeyResponse,
   DickerDataCredentials,
+  GetPriceResponse,
+  GetPriceResult,
   OrderItem,
   OrderDelivery,
   OrderHeader,
@@ -287,22 +289,31 @@ async function doGet<T>(path: string, query: URLSearchParams): Promise<T> {
   return data;
 }
 
-async function doPost<T>(path: string, body: unknown): Promise<T> {
+interface PostOptions {
+  /** Extra HTTP headers (e.g. Authorization), merged over the defaults. */
+  headers?: Record<string, string>;
+  /** Extra secret values to redact from auth-error text. */
+  secrets?: string[];
+  /** Skip the body-level AccessKey-rejection heuristic (caller classifies the body itself). */
+  skipAuthRejectionCheck?: boolean;
+}
+
+async function doPost<T>(path: string, body: unknown, opts: PostOptions = {}): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...opts.headers },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(15_000),
   });
   if (res.status === 401 || res.status === 403) {
     const header = (body as { RequestHeader?: RequestHeaderFields })?.RequestHeader;
-    await throwHttpAuthError(res, path, [header?.Token ?? '', header?.AccessKey ?? '']);
+    await throwHttpAuthError(res, path, [header?.Token ?? '', header?.AccessKey ?? '', ...(opts.secrets ?? [])]);
   }
   if (!res.ok) {
     throw new DickerDataApiError(`Dicker Data ${path} failed: HTTP ${res.status}`, res.status);
   }
   const data = (await res.json()) as T;
-  if (looksLikeAuthRejection(data)) {
+  if (!opts.skipAuthRejectionCheck && looksLikeAuthRejection(data)) {
     throw new DickerDataAuthError(`Dicker Data rejected the AccessKey for ${path}`);
   }
   return data;
@@ -312,7 +323,11 @@ async function doPost<T>(path: string, body: unknown): Promise<T> {
 // Pricing
 // ---------------------------------------------------------------------
 
-/** GET /api/PricingRequest - product pricing/stock lookup by product code list. */
+/**
+ * GET /api/PricingRequest - product pricing/stock lookup by product code list.
+ * This is Dicker's price-list (datafeed), which may lag the live account price
+ * and stock.
+ */
 export async function getPricing(creds: DickerDataCredentials, products: string[]): Promise<PricingResponse> {
   return withAccessKey(creds, (header) =>
     doGet<PricingResponse>(
@@ -329,15 +344,160 @@ export async function getPricing(creds: DickerDataCredentials, products: string[
   );
 }
 
+// TODO(WYREAI-592) BLOCKED: POST /api/DickerData/GetPrice requires an HTTP
+// Authorization header, but Dicker's swagger does not document the scheme.
+// Observed (dummy creds): no header -> HTTP 401 "Missing Request
+// Header/Authorization."; a wrong value -> Status "UNAUTHORISED".
+// Hypothesis: the swagger's POST /Token (form-urlencoded grant_type,
+// client_id, client_secret) issues a Bearer token, but it is unknown whether
+// client_id/secret are the AccountCode/AccessToken or separate Dicker-issued
+// credentials. This MUST NOT be wired to customer credentials until Dicker
+// (integration.support@dickerdata.com.au) confirms the scheme. Until then the
+// default provider returns null, so getPrice() never calls GetPrice and always
+// falls back to PricingRequest. The real implementation plugs in through
+// setGetPriceAuthorizationProvider(); the returned string is sent verbatim as
+// the Authorization header value (the provider decides the scheme).
+export type GetPriceAuthorizationProvider = (creds: DickerDataCredentials) => Promise<string | null>;
+
+const defaultGetPriceAuthorizationProvider: GetPriceAuthorizationProvider = async () => null;
+
+let getPriceAuthorizationProvider: GetPriceAuthorizationProvider = defaultGetPriceAuthorizationProvider;
+
+/** Inject the GetPrice Authorization provider; null resets to the default (none). */
+export function setGetPriceAuthorizationProvider(provider: GetPriceAuthorizationProvider | null): void {
+  getPriceAuthorizationProvider = provider ?? defaultGetPriceAuthorizationProvider;
+}
+
+export type GetPriceUnavailableReason =
+  | 'authorization-not-configured'
+  | 'authorization-provider-error'
+  | 'request-failed'
+  | 'vendor-status'
+  | 'malformed-response';
+
+/** Thrown when live GetPrice cannot produce a usable result. Messages never contain the Authorization value. */
+export class GetPriceUnavailableError extends Error {
+  constructor(message: string, readonly reason: GetPriceUnavailableReason) {
+    super(message);
+  }
+}
+
+function redact(text: string, secrets: string[]): string {
+  let out = text;
+  for (const secret of secrets.filter(Boolean).sort((a, b) => b.length - a.length)) {
+    out = out.split(secret).join('[redacted]');
+  }
+  return out;
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /**
- * Single-product pricing/stock via PricingRequest. GetPrice POST requires an
- * undocumented HTTP Authorization header (WYREAI-592); quantity is unsupported.
+ * POST /api/DickerData/GetPrice - live price/stock for one product. Throws
+ * GetPriceUnavailableError (without any network call if no Authorization
+ * value is available) when a usable live result cannot be obtained. The
+ * response is undocumented; success is HTTP 2xx, a SUCCESS/OK
+ * ResponseHeader.Status (or no Status with a non-empty Out) and an array Out.
  */
-export async function getPrice(
+export async function getLivePrice(
   creds: DickerDataCredentials,
   productCode: string
-): Promise<PricingResponse> {
-  return getPricing(creds, [productCode]);
+): Promise<Extract<GetPriceResult, { live: true }>> {
+  let authorization: string | null;
+  try {
+    authorization = await getPriceAuthorizationProvider(creds);
+  } catch {
+    throw new GetPriceUnavailableError('GetPrice Authorization provider failed', 'authorization-provider-error');
+  }
+  if (!authorization) {
+    throw new GetPriceUnavailableError(
+      'GetPrice Authorization scheme is not configured (unconfirmed with Dicker)',
+      'authorization-not-configured'
+    );
+  }
+  const secrets = [authorization, creds.accessToken];
+
+  let data: GetPriceResponse;
+  try {
+    data = await withAccessKey(creds, (header) =>
+      doPost<GetPriceResponse>(
+        '/api/DickerData/GetPrice',
+        {
+          RequestHeader: { TransactionID: header.TransactionID, Token: header.Token, AccessKey: header.AccessKey },
+          Products: [productCode],
+        },
+        { headers: { Authorization: authorization }, secrets, skipAuthRejectionCheck: true }
+      )
+    );
+  } catch (err) {
+    const status = err instanceof DickerDataApiError && err.status ? ` (HTTP ${err.status})` : '';
+    throw new GetPriceUnavailableError(
+      `GetPrice request failed${status}: ${redact(errorMessage(err), secrets)}`,
+      'request-failed'
+    );
+  }
+
+  const raw = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
+  const header = (raw.ResponseHeader ?? raw.responseHeader) as GetPriceResponse['ResponseHeader'];
+  const out = raw.Out ?? raw.out;
+  if (!Array.isArray(out)) {
+    throw new GetPriceUnavailableError('GetPrice response had no Out array', 'malformed-response');
+  }
+  const status = typeof header?.Status === 'string' ? header.Status.trim() : '';
+  const ok = status ? /^(success|ok)$/i.test(status) : out.length > 0;
+  if (!ok) {
+    const detail = [status && `Status ${status}`, header?.ErrorDescription?.trim()].filter(Boolean).join(': ');
+    throw new GetPriceUnavailableError(
+      `GetPrice returned ${redact(detail || 'no success Status', secrets)}`,
+      'vendor-status'
+    );
+  }
+  return {
+    source: 'GetPrice',
+    live: true,
+    productCode,
+    ResponseHeader: header,
+    Out: out as Record<string, unknown>[],
+  };
+}
+
+/**
+ * Single-product price/stock. Tries Dicker's live GetPrice first and falls
+ * back to the PricingRequest price-list feed (which may lag the live account
+ * price and stock) on any failure. Quantity is unsupported.
+ */
+export async function getPrice(creds: DickerDataCredentials, productCode: string): Promise<GetPriceResult> {
+  let liveFailure: GetPriceUnavailableError;
+  try {
+    return await getLivePrice(creds, productCode);
+  } catch (err) {
+    liveFailure =
+      err instanceof GetPriceUnavailableError
+        ? err
+        : new GetPriceUnavailableError('GetPrice failed unexpectedly', 'request-failed');
+  }
+
+  logger.warn('Live GetPrice unavailable, falling back to PricingRequest', { reason: liveFailure.reason });
+  try {
+    const pricing = await getPricing(creds, [productCode]);
+    return {
+      source: 'PricingRequest',
+      live: false,
+      productCode,
+      warning:
+        `Live GetPrice was unavailable (${liveFailure.message}); this price and stock-on-hand come from ` +
+        `Dicker's PricingRequest price-list feed and may lag your live account price and stock.`,
+      fallbackReason: liveFailure.reason,
+      ...pricing,
+    };
+  } catch (err) {
+    throw new Error(
+      `Price lookup failed. Live GetPrice unavailable (${liveFailure.message}); ` +
+        `PricingRequest fallback also failed (${errorMessage(err)}).`
+    );
+  }
 }
 
 // ---------------------------------------------------------------------
