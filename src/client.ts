@@ -312,7 +312,11 @@ async function doPost<T>(path: string, body: unknown): Promise<T> {
 // Pricing
 // ---------------------------------------------------------------------
 
-/** GET /api/PricingRequest - product pricing/stock lookup by product code list. */
+/**
+ * GET /api/PricingRequest - product pricing/stock lookup by product code list.
+ * This is Dicker's price-list (datafeed), which may lag the live account price
+ * and stock.
+ */
 export async function getPricing(creds: DickerDataCredentials, products: string[]): Promise<PricingResponse> {
   return withAccessKey(creds, (header) =>
     doGet<PricingResponse>(
@@ -330,7 +334,8 @@ export async function getPricing(creds: DickerDataCredentials, products: string[
 }
 
 /**
- * Single-product pricing/stock via PricingRequest. GetPrice POST requires an
+ * Single-product pricing/stock via the PricingRequest price-list feed (may lag
+ * the live account price and stock). The live GetPrice POST requires an
  * undocumented HTTP Authorization header (WYREAI-592); quantity is unsupported.
  */
 export async function getPrice(

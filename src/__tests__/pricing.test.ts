@@ -7,6 +7,22 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
+describe('pricing tool descriptions', () => {
+  it('do not claim live pricing and mention PricingRequest', () => {
+    for (const name of ['dickerdata_get_pricing', 'dickerdata_get_price']) {
+      const tool = PRICING_TOOLS.find((t) => t.name === name);
+      expect(tool).toBeDefined();
+      const desc = tool!.description ?? '';
+      expect(desc).toContain('PricingRequest');
+      // "live" may only appear in the disclaimers that say we do NOT provide it.
+      const claims = desc
+        .replace(/may lag your live account price and stock/gi, '')
+        .replace(/not Dicker's live GetPrice endpoint/gi, '');
+      expect(claims).not.toMatch(/\blive\b/i);
+    }
+  });
+});
+
 describe('handlePricingTool', () => {
   const fetchMock = vi.fn();
 

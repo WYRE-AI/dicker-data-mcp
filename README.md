@@ -41,8 +41,8 @@ In `AUTH_MODE=gateway`, `/mcp` also requires `X-DickerData-Account-Code` and `X-
 ## Tools
 
 ### Pricing
-- `dickerdata_get_pricing` - live pricing + stock-on-hand for one or more product codes.
-- `dickerdata_get_price` - pricing + stock for a single product code (via PricingRequest; no quantity parameter).
+- `dickerdata_get_pricing` - PricingRequest price-list (datafeed) pricing + stock-on-hand for one or more product codes. May lag your live account price and stock; dimensions may be null.
+- `dickerdata_get_price` - PricingRequest price-list (datafeed) pricing + stock for a single product code. Same feed as `dickerdata_get_pricing`, may lag your live account price and stock; no quantity-based pricing.
 
 ### Orders
 - `dickerdata_create_order` - place a purchase order.
@@ -57,7 +57,7 @@ In `AUTH_MODE=gateway`, `/mcp` also requires `X-DickerData-Account-Code` and `X-
 
 ## Known issues
 
-WYREAI-592: Dicker Data's POST `/api/DickerData/GetPrice` requires an undocumented HTTP Authorization header, so `dickerdata_get_price` now uses GET `/api/PricingRequest` (pricing and stock, no quantity-based pricing). `dickerdata_create_order` may hit the same "Missing Request Header/Authorization" 401 until Dicker confirms the auth scheme.
+WYREAI-592: Dicker Data's POST `/api/DickerData/GetPrice` requires an undocumented HTTP Authorization header, so `dickerdata_get_price` uses GET `/api/PricingRequest` instead (a price-list feed that may lag the live account price and stock; no quantity-based pricing). The live endpoint is not used until the Authorization scheme is known. `dickerdata_create_order` may hit the same "Missing Request Header/Authorization" 401 until Dicker confirms the auth scheme.
 
 ## Scope
 
