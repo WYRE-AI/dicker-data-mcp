@@ -38,6 +38,13 @@ Known placeholders are rejected at startup and do not count as a configured secr
 
 In `AUTH_MODE=gateway`, `/mcp` also requires `X-DickerData-Account-Code` and `X-DickerData-Access-Token`. Those headers are the only Dicker Data credentials for that request. A request missing either returns 401 and does not fall back to `DICKERDATA_ACCOUNT_CODE` / `DICKERDATA_ACCESS_TOKEN`.
 
+### Request limits
+
+- HTTP request bodies are capped at 256 KiB (262144 bytes). After the `X-Gateway-S2S` check (and, in `AUTH_MODE=gateway`, the vendor credential header check) passes, a `Content-Length` above the cap returns 413 with a JSON-RPC error; bodies without `Content-Length` are capped by the MCP SDK transport. Unauthenticated requests still get 401 first.
+- `tools/call` arguments are capped at 10,000 elements (every array item and object key at any depth). Larger inputs return an `isError` tool result and are never dispatched.
+
+These limits address CVE-2026-111768 / GHSA-46jr-4wx8-v453 (memory exhaustion during validation) and GHSA-f897-62hf-6gxq (no request body / batch cap).
+
 ## Tools
 
 ### Pricing
