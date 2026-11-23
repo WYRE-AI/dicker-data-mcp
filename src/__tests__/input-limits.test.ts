@@ -64,13 +64,13 @@ function s2s(): string {
   return `${message},v1=${createHmac('sha256', S2S_SECRET).update(message).digest('hex')}`;
 }
 
-function post(port: number, headers: Record<string, string>, body: string, declaredLength?: number) {
+function post(port: number, headers: Record<string, string>, body: string, declaredLength?: number, method = 'POST') {
   return new Promise<{ status: number; body: string }>((resolve, reject) => {
     const req = httpRequest(
       {
         hostname: '127.0.0.1',
         port,
-        method: 'POST',
+        method,
         path: '/mcp',
         headers: {
           'content-type': 'application/json',
@@ -126,6 +126,12 @@ describe('HTTP request limits', () => {
       error: { code: -32600, message: 'Request body exceeds 262144 bytes' },
       id: null,
     });
+  });
+
+  it('does not apply the declared-length 413 to non-POST methods', async () => {
+    const port = await listen();
+    const res = await post(port, { 'x-gateway-s2s': s2s() }, '', MAX_REQUEST_BODY_BYTES + 1, 'PUT');
+    expect(res.status).not.toBe(413);
   });
 
   it('still returns 401 for oversized bodies with missing or invalid S2S', async () => {

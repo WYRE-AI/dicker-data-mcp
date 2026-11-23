@@ -175,10 +175,11 @@ export async function startHttpServer(): Promise<HttpServer> {
       return;
     }
 
+    // POST only: other methods get the transport's 405 and Allow header.
     // Body cap runs only after the S2S and gateway credential checks pass so
     // unauthenticated callers still get 401.
     const contentLength = Number(headerValue(req.headers['content-length']));
-    if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BODY_BYTES) {
+    if (req.method === 'POST' && Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BODY_BYTES) {
       res.writeHead(413, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
