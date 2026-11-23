@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getPricing, requestAccessKey } from '../client.js';
+import { createOrder, DickerDataApiError, getPricing, requestAccessKey } from '../client.js';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -150,4 +150,61 @@ describe('getPricing - accessKey caching and refresh', () => {
     const retriedUrl = new URL(fetchMock.mock.calls[3][0] as string);
     expect(retriedUrl.searchParams.get('pricingRequest.accessKey')).toBe('ak-fresh');
   });
+
+  it.each(['GET', 'POST'])('does not refresh for an undocumented Authorization header on %s', async (method) => {
+    const creds = { accountCode: `ACC-HEADER-${method}`, accessToken: `tok-header-${method}` };
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ AccessKey: 'ak-header' }))
+      .mockResolvedValueOnce(jsonResponse({ ResponseHeader: {
+        Status: 'FAILURE', ErrorDescription: 'Missing Request Header/Authorization. ',
+      }, Out: [] }, 401));
+    const call = method === 'GET' ? getPricing(creds, ['ABC123']) : createOrder(creds, { items: [] });
+    await expect(call).rejects.toThrow('returned HTTP 401: Missing Request Header/Authorization.');
+    await expect(call).rejects.toBeInstanceOf(DickerDataApiError);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { label: 'top-level', body: { ErrorDescription: 'Invalid Token/Access Key. ' } },
+    { label: 'camelCase header', body: { responseHeader: { errorDescription: 'Invalid Token/Access Key. ' } } },
+    { label: 'Message', body: { Message: 'Invalid Token/Access Key. ' } },
+  ])('surfaces $label diagnostics and refreshes only once', async ({ label, body }) => {
+    const creds = { accountCode: `ACC-DIAGNOSTIC-${label}`, accessToken: `tok-diagnostic-${label}` };
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ AccessKey: 'ak-diag-stale' }))
+      .mockResolvedValueOnce(jsonResponse(body, 401))
+      .mockResolvedValueOnce(jsonResponse({ AccessKey: 'ak-diag-fresh' }))
+      .mockResolvedValueOnce(jsonResponse(body, 401));
+    await expect(getPricing(creds, ['ABC123'])).rejects.toThrow(
+      'Dicker Data /api/PricingRequest returned HTTP 401: Invalid Token/Access Key.'
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/api/AccessKeyRequest'))).toHaveLength(2);
+  });
+
+  it('retries non-JSON 401 responses without surfacing a parse error', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ AccessKey: 'ak-text-stale' }))
+      .mockResolvedValueOnce(new Response('Unauthorized', { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse({ AccessKey: 'ak-text-fresh' }))
+      .mockResolvedValueOnce(new Response('Unauthorized', { status: 401 }));
+    await expect(getPricing({ accountCode: 'ACC-TEXT', accessToken: 'tok-text' }, ['ABC123']))
+      .rejects.toThrow('Dicker Data rejected the AccessKey (HTTP 401)');
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it.each([false, true])('refreshes for a 200 unable-to-validate failure (nested: %s)', async (nested) => {
+    const failure = { Status: 'FAILURE', ErrorDescription: 'Unable to validate the access key. ' };
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ AccessKey: 'ak-unable-stale' }))
+      .mockResolvedValueOnce(jsonResponse(nested ? { ResponseHeader: failure } : failure))
+      .mockResolvedValueOnce(jsonResponse({ AccessKey: 'ak-unable-fresh' }))
+      .mockResolvedValueOnce(jsonResponse({ SearchResult: [{ PartNumber: 'ABC123' }] }));
+    const result = await getPricing({ accountCode: `ACC-UNABLE-${nested}`, accessToken: `tok-unable-${nested}` }, ['ABC123']);
+    expect(result.SearchResult?.[0].PartNumber).toBe('ABC123');
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(new URL(fetchMock.mock.calls[3][0] as string).searchParams.get('pricingRequest.accessKey'))
+      .toBe('ak-unable-fresh');
+  });
+
 });
